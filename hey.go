@@ -33,7 +33,7 @@ import (
 )
 
 const (
-	headerRegexp = `^([\w-]+):\s*(.+)`
+	headerRegexp = `^([^:]+)\s*:\s*(.+)`
 	authRegexp   = `^(.+):([^\s].+)`
 	heyUA        = "hey/0.0.1"
 )
