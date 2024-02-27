@@ -1,44 +1,23 @@
-FROM golang:1.15 as build
+ARG DOCKER_HUB_REMOTE=hub.docker.prod.walmart.com/hub-docker-release-remote
+FROM $DOCKER_HUB_REMOTE/library/golang:1.21-alpine as builder
 
-# Create appuser.
-# See https://stackoverflow.com/a/55757473/12429735
-ENV USER=appuser
-ENV UID=10001
-RUN adduser \
-    --disabled-password \
-    --gecos "" \
-    --home "/nonexistent" \
-    --shell "/sbin/nologin" \
-    --no-create-home \
-    --uid "${UID}" \
-    "${USER}"
-
-RUN apt-get update && apt-get install -y ca-certificates
-RUN go get github.com/rakyll/hey
+RUN version=$(grep '^VERSION' /etc/os-release | awk -F= '{ print $2 }' | awk -F. '{ print($1"."$2) }') && \
+    echo "Setup Alpine ${version} package repositories" && \
+    echo "http://ark-repos.wal-mart.com/ark/apk/published/alpine/$version/direct/soe/noenv/community" > /etc/apk/repositories && \
+    echo "http://ark-repos.wal-mart.com/ark/apk/published/alpine/$version/direct/soe/noenv/main" >> /etc/apk/repositories && \
+    rm -f /etc/ssl/cert.pem && ln -s /etc/ssl/certs/ca-certificates.crt /etc/ssl/cert.pem && \
+    apk add --update --no-cache curl
 
 # Build
 WORKDIR /go/src/github.com/rakyll/hey
-RUN go mod download
-RUN CGO_ENABLED=0 GOOS=linux go build -o /go/bin/hey hey.go
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux go build -o hey hey.go
 
-###############################################################################
-# final stage
-FROM scratch
-COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
-COPY --from=build /etc/passwd /etc/passwd
-COPY --from=build /etc/group /etc/group
-USER appuser:appuser
+ARG CRED_USERNAME
+ARG CRED_PASSWORD
+ARG GENERIC_REPO
+ARG TIMESTAMP
+RUN tar cvfz hey-${TIMESTAMP}.tar.gz hey
+# https://ci.artifacts.prod.walmart.com/ui/repos/tree/General/platform-generic/microservices/servicemesh/tools
+RUN curl -X PUT -u ${CRED_USERNAME}:${CRED_PASSWORD} ${GENERIC_REPO}/microservices/servicemesh/tools/hey-${TIMESTAMP}-linux-amd64.tgz -T hey-${TIMESTAMP}.tar.gz -v --fail
 
-ARG APPLICATION="hey"
-ARG DESCRIPTION="HTTP load generator, ApacheBench (ab) replacement, formerly known as rakyll/boom"
-ARG PACKAGE="rakyll/hey"
-
-LABEL org.opencontainers.image.ref.name="${PACKAGE}" \
-    org.opencontainers.image.authors="Jaana Dogan <@rakyll>" \
-    org.opencontainers.image.documentation="https://github.com/${PACKAGE}/README.md" \
-    org.opencontainers.image.description="${DESCRIPTION}" \
-    org.opencontainers.image.licenses="Apache 2.0" \
-    org.opencontainers.image.source="https://github.com/${PACKAGE}"
-
-COPY --from=build /go/bin/${APPLICATION} /hey
-ENTRYPOINT ["/hey"]

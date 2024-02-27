@@ -1,0 +1,58 @@
+tools:
+  jdk:
+    - 8
+  maven:
+    - 3.5.3
+envs:
+  global:
+    variables:
+      ALLOW_ARTIFACTORY: true
+#      IMAGE: ${REPOSOLNS_DOCKER_SERVER}/${REPOSOLNS_DOCKER_REPO}/ali/hey
+      VERSION: latest
+      CRED_USERNAME: "%{credentials.username('walmart-deployment')}"
+      CRED_PASSWORD: "%{credentials.password('walmart-deployment')}"
+      SLACK_CHANNEL: ali_test
+
+triggers:
+- pr: disabled
+- push: disabled
+- manual:
+    name: Deploy to artifactory
+    call: deploy-to-artifactory
+
+
+flows:
+  default: deploy-to-artifactory
+
+  deploy-to-artifactory:
+  - var(COMMIT_ID):
+      git log -1 --pretty=tformat:%h
+  - var(TIMESTAMP):
+      date '+%Y%m%d%H%M%S'
+  - echo ${TIMESTAMP}
+  - echo ${COMMIT_ID}
+  - try:
+    - dockerImage:
+        baseDir: .
+        dockerfile: './Dockerfile'
+        push: false
+        buildArgs:
+          CRED_USERNAME: ${reposolnsUsername}
+          CRED_PASSWORD: ${reposolnsPassword}
+          GENERIC_REPO: ${REPOSOLNS_GENERIC_REPO}
+          TIMESTAMP: ${TIMESTAMP}
+          DOCKER_HUB_REMOTE: ${REPOSOLNS_DOCKER_SERVER}/hub-docker-release-remote
+    catch:
+    - call: send-slack-message-and-exit
+
+  send-slack-message-and-exit:
+  - slack.postMessage:
+      message: "${JOB_NAME} failed"
+      channelId: ${SLACK_CHANNEL}
+      attachments:
+      - fallback: ${BUILD_URL}
+        actions:
+        - type: "button"
+          text: "Build info and log"
+          url: ${BUILD_URL}
+  - exit 1
